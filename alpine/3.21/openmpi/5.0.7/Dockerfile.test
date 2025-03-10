@@ -1,4 +1,4 @@
-FROM test:latest
+FROM alpine3.21_openmpi5.0.7_base:latest
 
 WORKDIR /app
 
