@@ -1,0 +1,47 @@
+FROM test:latest
+
+WORKDIR /app
+
+# Create Fortran source file using multiple echo commands
+RUN echo "program hello_world" > hello_world.f90 && \
+    echo "use mpi" >> hello_world.f90 && \
+    echo "implicit none" >> hello_world.f90 && \
+    echo "integer :: ierr, rank, size" >> hello_world.f90 && \
+    echo "" >> hello_world.f90 && \
+    echo "call MPI_INIT(ierr)" >> hello_world.f90 && \
+    echo "call MPI_COMM_RANK(MPI_COMM_WORLD, rank, ierr)" >> hello_world.f90 && \
+    echo "call MPI_COMM_SIZE(MPI_COMM_WORLD, size, ierr)" >> hello_world.f90 && \
+    echo "" >> hello_world.f90 && \
+    echo "print *, 'Hello, World! I am process', rank, 'of', size" >> hello_world.f90 && \
+    echo "" >> hello_world.f90 && \
+    echo "call MPI_FINALIZE(ierr)" >> hello_world.f90 && \
+    echo "end program hello_world" >> hello_world.f90
+
+# Compile the Fortran program
+RUN mpif90 -o hello_world hello_world.f90
+
+# Create C source file using multiple echo commands
+RUN echo "#include <mpi.h>" > hello_world.c && \
+    echo "#include <stdio.h>" >> hello_world.c && \
+    echo "#include <stdlib.h>" >> hello_world.c && \
+    echo "" >> hello_world.c && \
+    echo "int main(int argc, char** argv) {" >> hello_world.c && \
+    echo "    MPI_Init(&argc, &argv);" >> hello_world.c && \
+    echo "" >> hello_world.c && \
+    echo "    int world_size;" >> hello_world.c && \
+    echo "    MPI_Comm_size(MPI_COMM_WORLD, &world_size);" >> hello_world.c && \
+    echo "" >> hello_world.c && \
+    echo "    int world_rank;" >> hello_world.c && \
+    echo "    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);" >> hello_world.c && \
+    echo "" >> hello_world.c && \
+    echo "    printf(\"Hello world from process %d of %d\\n\", world_rank, world_size);" >> hello_world.c && \
+    echo "" >> hello_world.c && \
+    echo "    MPI_Finalize();" >> hello_world.c && \
+    echo "    return 0;" >> hello_world.c && \
+    echo "}" >> hello_world.c
+
+# Compile the C program
+RUN mpicc -o hello_world_c hello_world.c
+
+# Default command to run the Fortran MPI program with 4 processes
+CMD ["mpirun", "--allow-run-as-root", "-n", "4", "./hello_world"]

@@ -1,0 +1,54 @@
+FROM alpine:3.21
+ENV OPENMPI_MAJOR_VERION=5.0
+ENV OPENMPI_VERSION=5.0.7
+
+# Install build dependencies
+RUN apk update && \
+    apk add --no-cache \
+    build-base \
+    gcc \
+    g++ \
+    gfortran \
+    make \
+    wget \
+    perl \
+    python3 \
+    linux-headers \
+    autoconf \
+    automake \
+    libtool \
+    m4 \
+    file \
+    openssh \
+    libevent-dev \
+    hwloc-dev \
+    bsd-compat-headers \
+    musl-dev \
+    && rm -rf /var/cache/apk/*
+
+# Create workspace directory
+WORKDIR /tmp
+
+# Download and install OpenMPI
+RUN wget https://download.open-mpi.org/release/open-mpi/v${OPENMPI_MAJOR_VERION}/openmpi-${OPENMPI_VERSION}.tar.gz && \
+    tar -xzf openmpi-${OPENMPI_VERSION}.tar.gz && \
+    cd openmpi-${OPENMPI_VERSION} && \
+    ./configure --prefix=/usr --enable-mpi-fortran=all && \
+    make -j$(nproc) && \
+    make install && \
+    cd .. && \
+    rm -rf openmpi-${OPENMPI_VERSION} openmpi-${OPENMPI_VERSION}.tar.gz
+
+# Add OpenMPI bin directory to PATH
+ENV PATH="/usr/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/lib:${LD_LIBRARY_PATH}"
+
+# Clean up build dependencies to reduce image size
+RUN apk del \
+    autoconf \
+    automake \
+    libtool \
+    m4 \
+    wget \
+    perl \
+    && rm -rf /var/cache/apk/*
