@@ -1,17 +1,9 @@
-/**
- * mpi_matrix_multiply.c
- * 
- * A simple MPI program to perform distributed matrix multiplication.
- * 
- * Compile with: mpicc -o mpi_matrix_multiply mpi_matrix_multiply.c
- * Run with: mpirun -np <processes> ./mpi_matrix_multiply
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
 #include <time.h>
 #include <string.h>
+#include <unistd.h>
 
 #define MATRIX_SIZE 1000  // Size of the square matrices
 
@@ -54,7 +46,7 @@ int main(int argc, char *argv[]) {
     }
     // Process 0 initializes the matrices
     if (rank == 0) {
-        printf("Matrix multiplication: %d x %d matrices with %d processes\n", 
+        printf("Matrix multiplication: %d x %d matrices with %d processes\n",
                MATRIX_SIZE, MATRIX_SIZE, world_size);
         // Allocate memory for full matrices
         a = (double *)malloc(MATRIX_SIZE * MATRIX_SIZE * sizeof(double));

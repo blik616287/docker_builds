@@ -121,7 +121,7 @@ def create_mpi_pod_spec(client, rank, world_size, is_master=False):
     # Create the container spec
     container = core_v1.Container(
         name=container_name,
-        image=os.environ.get("MPI_IMAGE", "mpioperator/mpi-sample:latest"),
+        image=os.environ.get("MPI_IMAGE", "blik6126287/python3.9-slim_mpi-sample0.0.1_base:latest"),
         args=command,
         env=mpi_env,
         security_context=core_v1.SecurityContext(run_as_user=1000),

@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 DISABLE_SSL = os.environ.get("DISABLE_SSL", "true").lower() == "true"
 HOST = os.environ.get("ARMADA_SERVER", "localhost")
 PORT = os.environ.get("ARMADA_PORT", "50051")
-MPI_PROCESSES = int(os.environ.get("MPI_PROCESSES", "4"))  # Number of MPI processes
+MPI_PROCESSES = int(os.environ.get("MPI_PROCESSES", "4"))
 QUEUE_NAME = os.environ.get("QUEUE_NAME", f"mpi-c-queue-{uuid.uuid4().hex[:8]}")
 JOB_SET_ID = f"mpi-c-jobset-{uuid.uuid4().hex[:8]}"
-MPI_IMAGE = os.environ.get("MPI_IMAGE", "mpi-c-app:latest")  # Your MPI container image
+MPI_IMAGE = os.environ.get("MPI_IMAGE", "blik6126287/debianbullseye-slim_mpi-c-app0.0.1_base:latest")
 NAMESPACE = os.environ.get("NAMESPACE", "default")
 
 
