@@ -10,7 +10,7 @@ MPI_TYPE ?= mpich
 MPI_VERSION ?= 4.3.0
 
 # Dynamically set the Dockerfile directory based on OS
-DOCKERFILE_DIR = $(HOME)/Desktop/armada_mpi/$(OS)
+DOCKERFILE_DIR = $(PWD}/$(OS)
 
 # Use consistent directory structure and image naming
 BASE_DIR = $(OS)/$(OS_VERSION)
