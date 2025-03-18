@@ -120,7 +120,7 @@ if [ "${MPI_RANK}" = "0" ]; then
   # comms broken
   mpirun --allow-run-as-root \
     -mca btl tcp,self \
-    -H 10.224.13.60:1,10.224.51.123:1,10.224.113.249:1 \
+    -hostfile /app/hostfile \ 
     --map-by node \
     -mca plm "rsh" \
     -mca orte_rsh_agent "ssh -o StrictHostKeyChecking=no" \
