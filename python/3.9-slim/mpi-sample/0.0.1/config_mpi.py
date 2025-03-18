@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""
-MPI Job Submission using block device PVC for shared storage
-
-This script submits MPI jobs to run on Kubernetes clusters using Armada.
-It attaches a shared block device in each container for data sharing.
-"""
-
 import os
 import uuid
 import grpc
@@ -32,12 +24,11 @@ JOB_SET_PREFIX = "mpi-jobset"
 MONITORING_TIMEOUT = int(os.environ.get("MONITORING_TIMEOUT", "300"))
 NAMESPACE = os.environ.get("NAMESPACE", "default")
 
-# PVC Configuration
-PVC_NAME = os.environ.get("PVC_NAME", "mpi-shared-data")
-PVC_DEVICE_PATH = os.environ.get("PVC_DEVICE_PATH", "/dev/block/shared")
-PVC_STORAGE_CLASS = os.environ.get("PVC_STORAGE_CLASS", "rook-ceph-block")
+# PVC Configuration - UPDATED for CephFS
+PVC_NAME = os.environ.get("PVC_NAME", "mpi-shared-data-cephfs")
+PVC_MOUNT_PATH = os.environ.get("PVC_MOUNT_PATH", "/app/shared")
+PVC_STORAGE_CLASS = os.environ.get("PVC_STORAGE_CLASS", "rook-cephfs")
 PVC_STORAGE_SIZE = os.environ.get("PVC_STORAGE_SIZE", "10Gi")
-
 
 def create_armada_client():
     """Create and return an Armada client."""
@@ -86,23 +77,19 @@ def create_mpi_queue(client):
     queue_name = QUEUE_NAME
     if not queue_name:
         queue_name = f"mpi-queue-{uuid.uuid4().hex[:8]}"
-
     logger.info(f"Creating/verifying queue: {queue_name}")
-
     # Define permissions - allow users to submit and monitor jobs
     subject = Subject(kind="Group", name="users")
     permissions = Permissions(
         subjects=[subject],
         verbs=["submit", "cancel", "reprioritize", "watch"]
     )
-
     # Set resource limits for the queue
     resource_limits = {
         "cpu": float(os.environ.get("QUEUE_CPU_LIMIT", "100.0")),
         "memory": float(os.environ.get("QUEUE_MEMORY_LIMIT", "500.0")),
         "gpu": float(os.environ.get("QUEUE_GPU_LIMIT", "0"))
     }
-
     queue_req = client.create_queue_request(
         name=queue_name,
         priority_factor=PRIORITY_FACTOR,
@@ -111,7 +98,6 @@ def create_mpi_queue(client):
         resource_limits=resource_limits,
         permissions=[permissions]
     )
-
     # Try to retrieve the queue first to see if it exists
     try:
         existing_queue = client.get_queue(queue_name)
@@ -129,7 +115,6 @@ def create_mpi_queue(client):
         else:
             logger.error(f"Error checking queue: {e}")
             raise e
-
     # Verify the queue exists and is accessible
     max_retries = 5
     retry_delay = 2
@@ -147,7 +132,6 @@ def create_mpi_queue(client):
             else:
                 logger.error(f"Unexpected error verifying queue: {e}")
                 raise e
-
     # If we've exhausted retries
     logger.error(f"Could not verify queue {queue_name} after {max_retries} attempts")
     raise Exception(f"Queue {queue_name} creation succeeded but verification failed")
@@ -156,7 +140,7 @@ def create_mpi_queue(client):
 def create_volume_with_pvc(pvc_name):
     """
     Create a Volume object with a PVC reference using the correct protobuf structure.
-    Ensures read-write access for block volumes.
+    For CephFS, we're using a standard volumeMount instead of volumeDevices.
 
     Args:
         pvc_name: The name of the PVC to reference
@@ -167,95 +151,54 @@ def create_volume_with_pvc(pvc_name):
     # Find the volume field names by inspection
     volume_fields = [f.name for f in core_v1.Volume.DESCRIPTOR.fields]
     logger.info(f"Volume fields: {volume_fields}")
-
     # Find the source field in Volume (not 'name')
     source_field_name = None
     for field in volume_fields:
         if field != "name":
             source_field_name = field
             break
-
     if not source_field_name:
         logger.error("Could not find source field in Volume")
         raise ValueError("Volume structure doesn't have a field other than 'name'")
-
     # Find the PVC field in VolumeSource
     vs_fields = [f.name for f in core_v1.VolumeSource.DESCRIPTOR.fields]
     logger.info(f"VolumeSource fields: {vs_fields}")
-
     # Find PVC field in VolumeSource
     pvc_field_name = None
     for field in vs_fields:
         if "persistentvolumeclaim" in field.lower() or "pvc" in field.lower():
             pvc_field_name = field
             break
-
     if not pvc_field_name:
         logger.error("Could not find PVC field in VolumeSource")
         raise ValueError("VolumeSource structure doesn't have a PVC field")
-
     logger.info(f"Found field structure: Volume.{source_field_name}.{pvc_field_name}")
-
-    # Check the PersistentVolumeClaimVolumeSource fields to ensure we set readOnly: false
+    # Check the PersistentVolumeClaimVolumeSource fields
     pvc_source_fields = [f.name for f in core_v1.PersistentVolumeClaimVolumeSource.DESCRIPTOR.fields]
     logger.info(f"PVC source fields: {pvc_source_fields}")
-
-    # Check if readOnly field exists
-    read_only_field = None
-    for field in pvc_source_fields:
-        if field.lower() == "readonly":
-            read_only_field = field
-            break
-
-    # Build the object structure from inside out
     # Create PVC source with claim name and readOnly explicitly set to false
     pvc_source = core_v1.PersistentVolumeClaimVolumeSource(
         claimName=pvc_name,
         readOnly=False
     )
     logger.info(f"Created PVC source with claimName={pvc_name}, readOnly=False")
-
     # Create VolumeSource with PVC field set
-    # Need to use kwargs to set the right field
     vs_kwargs = {}
     vs_kwargs[pvc_field_name] = pvc_source
     volume_source = core_v1.VolumeSource(**vs_kwargs)
     logger.info(f"Created VolumeSource with {pvc_field_name} field")
-
     # Create Volume with source field set
-    # Again using kwargs to set the right field
     vol_kwargs = {"name": "shared-data"}
     vol_kwargs[source_field_name] = volume_source
     volume = core_v1.Volume(**vol_kwargs)
     logger.info(f"Created Volume with {source_field_name} field")
-
-    # Verify the structure is correct
-    if hasattr(volume, source_field_name):
-        source = getattr(volume, source_field_name)
-        if hasattr(source, pvc_field_name):
-            pvc = getattr(source, pvc_field_name)
-            if hasattr(pvc, "claimName") and pvc.claimName == pvc_name:
-                logger.info(f"Successfully verified Volume.{source_field_name}.{pvc_field_name}.claimName = {pvc_name}")
-
-                # Check if readOnly is properly set
-                if read_only_field and hasattr(pvc, read_only_field):
-                    readonly_value = getattr(pvc, read_only_field)
-                    logger.info(f"PVC readOnly setting: {readonly_value}")
-
-                return volume
-            else:
-                logger.error("PVC source doesn't have correct claimName")
-        else:
-            logger.error(f"VolumeSource doesn't have {pvc_field_name} field")
-    else:
-        logger.error(f"Volume doesn't have {source_field_name} field")
-
-    raise ValueError("Failed to create a proper Volume with PVC reference")
+    return volume
 
 
 def create_mpi_pod_spec(client, rank, world_size, job_set_id):
     """
     Create a pod spec for an MPI process (master or worker).
+    Updated to use volumeMounts instead of volumeDevices for CephFS.
 
     Args:
         client: The Armada client
@@ -269,10 +212,8 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id):
     # Role designation
     is_master = (rank == 0)
     role = "master" if is_master else "worker"
-
     # Pod naming based on job set ID and rank
     pod_name = f"mpi-{rank}-{job_set_id}"
-
     # Common environment variables for MPI
     # These will be used by the container's entrypoint script
     mpi_env = [
@@ -288,13 +229,11 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id):
         core_v1.EnvVar(name="OMPI_MCA_btl", value="tcp,self"),
         core_v1.EnvVar(name="OMPI_MCA_oob", value="tcp"),
         core_v1.EnvVar(name="OMPI_MCA_plm", value="isolated"),
-        # Shared device path environment variable
-        core_v1.EnvVar(name="SHARED_DEVICE_PATH", value=PVC_DEVICE_PATH),
+        # Shared mount path environment variable (updated from device path)
+        core_v1.EnvVar(name="MOUNTPOINT", value=PVC_MOUNT_PATH),
     ]
-
     # Container name
     container_name = "mpi-master" if is_master else f"mpi-worker-{rank}"
-
     # Common pod labels for identification
     pod_labels = {
         "app": "mpi-job",
@@ -302,13 +241,10 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id):
         "role": role,
         "rank": str(rank)
     }
-
     # Define resource requirements
     cpu_request = "750m" if is_master else "650m"
     memory_request = "1Gi" if is_master else "750Mi"
-
-    # Create the main container spec with volume devices (not mounts)
-    # volumeDevices is used for block devices instead of volumeMounts
+    # Create the main container spec with volumeMounts (not volumeDevices as before)
     main_container = core_v1.Container(
         name=container_name,
         image=os.environ.get("MPI_IMAGE", "blik6126287/python3.9-slim_mpi-sample0.0.1_base:latest"),
@@ -323,34 +259,33 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id):
                 "memory": api_resource.Quantity(string=memory_request),
             },
         ),
-        # Use volumeDevices instead of volumeMounts for block mode PVCs
-        volumeDevices=[
-            core_v1.VolumeDevice(
+        # Use volumeMounts instead of volumeDevices for CephFS
+        volumeMounts=[
+            core_v1.VolumeMount(
                 name="shared-data",
-                devicePath=PVC_DEVICE_PATH
+                mountPath=PVC_MOUNT_PATH
             )
         ],
+        # We still need privileged access for the MPI tasks
         securityContext=core_v1.SecurityContext(
             privileged=True,
             capabilities=core_v1.Capabilities(add=["SYS_ADMIN"]),
             seccompProfile=core_v1.SeccompProfile(type="Unconfined")
         )
     )
-
-    # Create a volume with PVC reference - ensuring readOnly is False
     try:
+        # Create volume with PVC reference
         shared_volume = create_volume_with_pvc(PVC_NAME)
-        logger.info(f"Created volume referencing PVC {PVC_NAME} with readOnly=False")
-
+        logger.info(f"Created volume referencing PVC {PVC_NAME}")
         # Create pod spec with container and volume
         pod_spec = core_v1.PodSpec(
             containers=[main_container],
             volumes=[shared_volume],
+            # Updated fsGroup for file access (not block device access)
             securityContext=core_v1.PodSecurityContext(
-                fsGroup=0  # Ensure root-level access to the block device
+                fsGroup=1000  # Use a non-root group for file access
             )
         )
-
         # Create job request item
         job_item = client.create_job_request_item(
             priority=int(os.environ.get("JOB_PRIORITY", "50")),
@@ -358,7 +293,6 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id):
             labels=pod_labels,
             namespace=NAMESPACE
         )
-
         return job_item
     except Exception as e:
         logger.error(f"Failed to create pod spec: {e}")
@@ -380,17 +314,13 @@ def submit_mpi_job(client, queue_name):
     world_size = MPI_PROCESSES
     job_set_id = f"{JOB_SET_PREFIX}-{uuid.uuid4().hex[:8]}"
     logger.info(f"Creating MPI job set {job_set_id} with {world_size} processes")
-
     # Create job request items for master and workers
     job_request_items = []
-
     # Add master pod (rank 0)
     job_request_items.append(create_mpi_pod_spec(client, 0, world_size, job_set_id))
-
     # Add worker pods (ranks 1 to world_size-1)
     for rank in range(1, world_size):
         job_request_items.append(create_mpi_pod_spec(client, rank, world_size, job_set_id))
-
     # Submit the jobs as a job set
     logger.info(f"Submitting job set to queue {queue_name}")
     response = client.submit_jobs(
@@ -398,18 +328,15 @@ def submit_mpi_job(client, queue_name):
         job_set_id=job_set_id,
         job_request_items=job_request_items
     )
-
     # Extract job IDs from response
     job_ids = [item.job_id for item in response.job_response_items]
     logger.info(f"Submitted job set {job_set_id}")
     logger.info(f"Master job ID: {job_ids[0]}")
     logger.info(f"Worker job IDs: {job_ids[1:]}")
-
     # Log important information about the PVC
-    logger.info(f"Important: All pods use PVC {PVC_NAME} as a block device at {PVC_DEVICE_PATH}")
-    logger.info(f"Make sure PVC {PVC_NAME} exists in namespace {NAMESPACE} with volumeMode: Block")
+    logger.info(f"Important: All pods use CephFS PVC {PVC_NAME} mounted at {PVC_MOUNT_PATH}")
+    logger.info(f"Make sure PVC {PVC_NAME} exists in namespace {NAMESPACE} with volumeMode: Filesystem")
     logger.info(f"The PVC should be used with ReadWriteMany access mode with proper RBAC permissions")
-
     return job_set_id, job_ids
 
 
@@ -428,51 +355,40 @@ def monitor_job_set(client, queue_name, job_set_id, timeout_seconds=None):
     """
     if timeout_seconds is None:
         timeout_seconds = MONITORING_TIMEOUT
-
     logger.info(f"Monitoring job set {job_set_id} with {timeout_seconds}s timeout")
-
     # Allow time for the job set to be created
     time.sleep(2)
-
     # Get event stream for the job set
     try:
         event_stream = client.get_job_events_stream(queue=queue_name, job_set_id=job_set_id)
     except grpc.RpcError as e:
         logger.error(f"Failed to get event stream: {e}")
         return False
-
     # Track job states
     job_states = {}
     start_time = time.time()
-
     try:
         for event_grpc in event_stream:
             # Check timeout
             if time.time() - start_time > timeout_seconds:
                 logger.error(f"Monitoring timed out after {timeout_seconds} seconds")
                 return False
-
             # Process event
             event = client.unmarshal_event_response(event_grpc)
             job_id = event.message.job_id
             event_type = event.type
             logger.info(f"Job {job_id} - {event_type}")
-
             # Update job state
             job_states[job_id] = event_type
-
             # Check for terminal events
             terminal_events = [EventType.failed, EventType.succeeded, EventType.cancelled]
-
             # Check if all jobs have reached terminal state
             active_jobs = [job_id for job_id, state in job_states.items()
                            if state not in terminal_events]
-
             if not active_jobs and job_states:
                 # All jobs have reached terminal state
                 failed_jobs = [job_id for job_id, state in job_states.items()
                                if state == EventType.failed or state == EventType.cancelled]
-
                 if failed_jobs:
                     logger.error(f"Job set {job_set_id} has {len(failed_jobs)} failed jobs")
                     return False
@@ -488,16 +404,14 @@ def monitor_job_set(client, queue_name, job_set_id, timeout_seconds=None):
             client.unwatch_events(event_stream)
         except Exception as e:
             logger.warning(f"Error closing event stream: {e}")
-
     return False
 
 
 def main():
-    """Main workflow to create and run an MPI job with shared block device."""
+    """Main workflow to create and run an MPI job with shared filesystem."""
     try:
         # Create Armada client
         client = create_armada_client()
-
         # Get queue - either create new one or use existing one
         if QUEUE_NAME:
             # Try to use specified queue name
@@ -510,13 +424,10 @@ def main():
         else:
             # Create a new queue
             queue_name = create_mpi_queue(client)
-
         logger.info(f"Using queue: {queue_name}")
-
         # Add a delay to ensure queue is ready
         time.sleep(5)
         logger.info("Waiting for queue to be fully ready")
-
         # Try to get the queue again to make sure it's there
         try:
             client.get_queue(queue_name)
@@ -524,26 +435,21 @@ def main():
         except grpc.RpcError as e:
             logger.error(f"Queue still not accessible after delay: {e}")
             raise e
-
-        # Important: We need a PVC to exist already with Block mode
+        # Important: Using CephFS PVC with ReadWriteMany
         logger.info(f"IMPORTANT: A PVC named {PVC_NAME} must exist in namespace {NAMESPACE}")
-        logger.info(f"The PVC should have volumeMode: Block, accessModes: ReadWriteMany")
+        logger.info(f"The PVC should have volumeMode: Filesystem, accessModes: ReadWriteMany")
         logger.info(f"And use storage class {PVC_STORAGE_CLASS}")
-        logger.info(f"Make sure the storage class supports ReadWriteMany access for Block volumes")
-        logger.info(f"Create the PVC before running this script if it doesn't exist already")
-
+        logger.info(f"Using CephFS for true ReadWriteMany shared filesystem access")
         # Submit MPI job
         job_set_id, job_ids = submit_mpi_job(client, queue_name)
         logger.info(f"MPI job set {job_set_id} submitted successfully")
-        logger.info(f"Using block device PVC {PVC_NAME} at {PVC_DEVICE_PATH}")
-
+        logger.info(f"Using CephFS PVC {PVC_NAME} mounted at {PVC_MOUNT_PATH}")
         # Monitor job execution
         success = monitor_job_set(client, queue_name, job_set_id)
         if success:
             logger.info("MPI job completed successfully")
         else:
             logger.error("MPI job failed")
-
     except Exception as e:
         logger.error(f"Workflow failed: {e}")
         raise

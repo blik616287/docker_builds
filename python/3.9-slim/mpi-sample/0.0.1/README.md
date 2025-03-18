@@ -10,30 +10,58 @@ currently fails on master, and sleeps infinity on workers for testing purposes
 
 ## pvc dependancy
 ```yaml
-root@kube-controller1:~# cat mpi-shared-data-pvc.yaml 
+root@kube-controller1:~# cat cephfs.yaml 
+apiVersion: ceph.rook.io/v1
+kind: CephFilesystem
+metadata:
+  name: myfs
+  namespace: rook-ceph
+spec:
+  metadataPool:
+    replicated:
+      size: 3
+  dataPools:
+    - name: data0
+      replicated:
+        size: 3
+  metadataServer:
+    activeCount: 1
+    activeStandby: true
+
+root@kube-controller1:~/armada-operator# cat cephfs-storageclass.yaml 
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: rook-cephfs
+provisioner: rook-ceph.cephfs.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  fsName: myfs
+  pool: myfs-data0
+  # These secrets are created automatically by the Rook operator
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-cephfs-node
+  csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+
+root@kube-controller1:~/armada-operator# cat mpi-shared-pvc.yaml 
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  annotations:
-    volume.beta.kubernetes.io/storage-provisioner: rook-ceph.rbd.csi.ceph.com
-    volume.kubernetes.io/storage-provisioner: rook-ceph.rbd.csi.ceph.com
-  creationTimestamp: "2025-03-13T21:04:00Z"
-  finalizers:
-  - kubernetes.io/pvc-protection
-  name: mpi-shared-data
+  name: mpi-shared-data-cephfs
   namespace: default
-  resourceVersion: "46267"
-  uid: c2d5e348-abc8-4dba-99af-5e6de0e8c6aa
 spec:
   accessModes:
-  - ReadWriteMany
+    - ReadWriteMany
   resources:
     requests:
       storage: 10Gi
-  storageClassName: rook-ceph-block
-  volumeMode: Block
-status:
-  phase: Pending
+  storageClassName: rook-cephfs
 ```
 
 ## todo

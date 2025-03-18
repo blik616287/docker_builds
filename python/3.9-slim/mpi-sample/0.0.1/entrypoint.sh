@@ -1,136 +1,135 @@
 #!/bin/bash
-set -e
-
-### bunch of cargo cult in here, so please be aware the cross pod networking is broken atm
-### so like 90% of this needs to be refactored
-### todo: dns lookup
-# $(hostname -i | tr '.' '-').$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).pod.cluster.local
 
 # Print diagnostic info
 echo "Container starting up"
 echo "Hostname: $(hostname)"
 echo "MPI_RANK: ${MPI_RANK}"
 echo "MPI_WORLD_SIZE: ${MPI_WORLD_SIZE}"
+echo "JOB_SET_ID: ${JOB_SET_ID}"
+echo "POD_NAME: ${POD_NAME}"
 
-# Create MPI directory if it doesn't exist
-mkdir -p /etc/mpi
-mkdir -p /etc/mpi/shared
+# Set environment variables for MPI
+export OMPI_MCA_btl="tcp,self"
+export OMPI_MCA_btl_tcp_if_include="eth0"
+export OMPI_MCA_oob_tcp_if_include="eth0"
+export OMPI_MCA_orte_keepalive_timeout=60
+export OMPI_MCA_btl_tcp_port_min_v4=31000
+export OMPI_MCA_btl_tcp_port_range_v4=1000
+export OMPI_MCA_oob_tcp_static_ports=31000-32000
 
-# mount shared storage block
-mkdir -p /app/shared
-mount -o rw /dev/block/shared /app/shared
+# Create shared directories
+export MOUNTPOINT="/app/shared"
+mkdir -p "$MOUNTPOINT/hostfiles/$JOB_SET_ID"
+mkdir -p "$MOUNTPOINT/ssh/$JOB_SET_ID"
 
-# Remove any existing hostfile to start fresh
-if [ -f /etc/mpi/hostfile ]; then
-  echo "Removing existing hostfile"
-  rm /etc/mpi/hostfile
+# Start SSH daemon
+service ssh start
+
+# MASTER NODE (RANK 0) - SETUP SSH KEYS AND COORDINATION
+if [ "${MPI_RANK}" = "0" ]; then
+    echo "Master node (Rank 0) setting up SSH keys"
+    # Generate SSH key on master
+    ssh-keygen -t rsa -N "" -f /root/.ssh/id_rsa
+    # Copy the SSH keys to shared directory for workers to use
+    cp /root/.ssh/id_rsa "$MOUNTPOINT/ssh/$JOB_SET_ID/id_rsa"
+    cp /root/.ssh/id_rsa.pub "$MOUNTPOINT/ssh/$JOB_SET_ID/id_rsa.pub"
+    # Use the public key for master as well (self-access)
+    cat /root/.ssh/id_rsa.pub >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    # Create a flag file to signal SSH setup is complete
+    touch "$MOUNTPOINT/ssh/$JOB_SET_ID/ssh_setup_complete"
 fi
 
-# Generate a hostfile with Kubernetes FQDN naming
-echo "Generating MPI hostfile with Kubernetes FQDN naming..."
+# WORKER NODES - WAIT FOR SSH SETUP TO COMPLETE
+if [ "${MPI_RANK}" != "0" ]; then
+    echo "Worker node waiting for SSH setup to complete"
+    # Wait for SSH setup to complete on master
+    while [ ! -f "$MOUNTPOINT/ssh/$JOB_SET_ID/ssh_setup_complete" ]; do
+        echo "Waiting for SSH setup to complete..."
+        sleep 2
+    done
+    # Copy SSH keys from shared volume
+    cp "$MOUNTPOINT/ssh/$JOB_SET_ID/id_rsa" /root/.ssh/id_rsa
+    cp "$MOUNTPOINT/ssh/$JOB_SET_ID/id_rsa.pub" /root/.ssh/id_rsa.pub
+    cat "$MOUNTPOINT/ssh/$JOB_SET_ID/id_rsa.pub" >> /root/.ssh/authorized_keys
+    # Set proper permissions
+    chmod 600 /root/.ssh/id_rsa
+    chmod 644 /root/.ssh/id_rsa.pub
+    chmod 600 /root/.ssh/authorized_keys
+    echo "Worker SSH setup complete"
+fi
 
-# Get actual hostname pattern from Armada
-OWN_HOSTNAME=$(hostname)
-echo "Current hostname: ${OWN_HOSTNAME}"
+# Create a flag file for MPI hosts
+mkdir -p "$MOUNTPOINT/hostfiles/$JOB_SET_ID"
+echo "$(hostname -i | tr '.' '-').$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).pod.cluster.local" > "$MOUNTPOINT/hostfiles/$JOB_SET_ID/$POD_NAME"
 
-# Extract the job ID prefix
-JOB_PREFIX=$(echo ${OWN_HOSTNAME} | sed -E 's/-[0-9]+$//')
-echo "Job prefix: ${JOB_PREFIX}"
-
-# Generate hostfile with Kubernetes DNS format for ALL nodes
-for i in $(seq 0 $((${MPI_WORLD_SIZE}-1))); do
-  # Format: {job_prefix}-{rank}.default.svc.cluster.local
-  HOST="${JOB_PREFIX}-${i}.default.svc.cluster.local"
-  echo "${HOST} slots=1" >> /etc/mpi/hostfile
-  echo "Added ${HOST} to hostfile"
+# Wait until we have the required number of worker hosts
+# We need to count only the host files, not the SSH keys or other files
+while true; do
+  HOST_COUNT=$(ls -1 "$MOUNTPOINT/hostfiles/$JOB_SET_ID" | wc -l)
+  if [ "$HOST_COUNT" -ge "$MPI_WORLD_SIZE" ]; then
+    echo "Found $HOST_COUNT host files, proceeding..."
+    break
+  else
+    echo "Found $HOST_COUNT host files, waiting for $MPI_WORLD_SIZE..."
+    sleep 5
+  fi
 done
 
-# Check if we're using a shared directory
-if [ -n "${MPI_SHARED_DIR}" ] && [ -d "${MPI_SHARED_DIR}" ]; then
-  echo "Using shared directory for hostfile: ${MPI_SHARED_DIR}"
-  # Copy hostfile to shared directory
-  cp /etc/mpi/hostfile ${MPI_SHARED_DIR}/hostfile
-  echo "Copied hostfile to shared directory"
-  # Set the shared hostfile path for MPI
-  MPI_HOSTFILE_PATH="${MPI_SHARED_DIR}/hostfile"
-else
-  echo "No shared directory defined, using local hostfile"
-  MPI_HOSTFILE_PATH="/etc/mpi/hostfile"
-fi
+# Process each host file and update /etc/hosts and hostfile
+rm -rf /app/hostfile
+touch /app/hostfile  # Create empty hostfile
 
-echo "Generated hostfile (${MPI_HOSTFILE_PATH}):"
-cat ${MPI_HOSTFILE_PATH}
-
-# Master node starts MPI job
-if [ "${MPI_RANK}" = "0" ]; then
-  echo "I am the master node, starting MPI job..."
-  # Wait for workers to be ready
-  echo "Waiting 5 seconds for workers to be ready..."
-  sleep 5
-  # Verify connectivity to worker nodes
-  for i in $(seq 1 $((${MPI_WORLD_SIZE}-1))); do
-    WORKER="${JOB_PREFIX}-${i}.default.svc.cluster.local"
-    echo "Testing DNS resolution for ${WORKER}..."
-    if getent hosts ${WORKER} >/dev/null 2>&1; then
-      echo "  ✓ DNS resolution for ${WORKER} successful"
-      WORKER_IP=$(getent hosts ${WORKER} | awk '{print $1}')
-      echo "    IP address: ${WORKER_IP}"
-      # Test TCP connectivity to port 29500
-      echo "  Testing TCP connectivity to ${WORKER_IP}:29500..."
-      if timeout 2 bash -c "cat < /dev/null > /dev/tcp/${WORKER_IP}/29500" 2>/dev/null; then
-        echo "    ✓ TCP connection successful"
-      else
-        echo "    ✗ TCP connection failed - may be normal if worker isn't listening yet"
-      fi
+# First, gather information about all pods and their IPs
+for FILE in "$MOUNTPOINT/hostfiles/$JOB_SET_ID"/*; do
+  HOSTNAME=$(basename "$FILE")
+  IP_ADDRESS=$(cat "$FILE" | tr -d '\n\r')
+  # Extract IP address if the file contains a hostname with IP format
+  if [[ "$IP_ADDRESS" =~ ^[0-9]+-[0-9]+-[0-9]+-[0-9]+\..* ]]; then
+    # Convert from 10-224-13-48 format to 10.224.13.48
+    IP_ADDRESS=$(echo "$IP_ADDRESS" | cut -d'.' -f1 | sed 's/-/./g')
+    # Check if this is one of our MPI hosts
+    echo "Adding to /etc/hosts: $IP_ADDRESS $HOSTNAME"
+    # Check if entry already exists
+    if grep -q "$HOSTNAME" /etc/hosts; then
+      echo "Entry for $HOSTNAME already exists in /etc/hosts, updating..."
+      sed -i "s/.*$HOSTNAME$/$IP_ADDRESS $HOSTNAME/" /etc/hosts
     else
-      echo "  ✗ Cannot resolve ${WORKER} via DNS"
-      # Try short name without domain suffix as fallback
-      SHORT_WORKER="${JOB_PREFIX}-${i}"
-      echo "  Trying short name: ${SHORT_WORKER}..."
-      if getent hosts ${SHORT_WORKER} >/dev/null 2>&1; then
-        echo "    ✓ DNS resolution for ${SHORT_WORKER} successful"
-        WORKER_IP=$(getent hosts ${SHORT_WORKER} | awk '{print $1}')
-        echo "    IP address: ${WORKER_IP}"
-        # Update hostfile with short name since it works
-        sed -i "s/${WORKER}/${SHORT_WORKER}/" /etc/mpi/hostfile
-        echo "    Updated hostfile to use short name"
-      else
-        echo "    ✗ Cannot resolve short name either - keeping FQDN in hostfile"
-      fi
+      echo "$IP_ADDRESS $HOSTNAME" >> /etc/hosts
     fi
-  done
-  # Run MPI application
-  echo "Starting MPI run with hostfile:"
-  cat ${MPI_HOSTFILE_PATH}
-  mpirun --allow-run-as-root \
-         --hostfile ${MPI_HOSTFILE_PATH} \
-         --bind-to none \
-         -v \
-         -np ${MPI_WORLD_SIZE} \
-         python /app/mpi_script.py
-else
-  echo "I am worker node ${MPI_RANK}, waiting for MPI tasks..."
-  # Workers wait for MPI tasks with timeout
-  TIMEOUT=90
-  echo "Worker ready, waiting for MPI tasks (timeout: ${TIMEOUT}s)"
-  # Wait for MPI tasks or timeout
-  for ((i=1; i<=$TIMEOUT; i++)); do
-    if pgrep -f "python" > /dev/null || pgrep -f "mpi" > /dev/null; then
-      echo "MPI task detected, worker active"
-      # Wait for task completion
-      while pgrep -f "python" > /dev/null || pgrep -f "mpi" > /dev/null; do
-        sleep 5
-      done
-      echo "MPI task completed, worker shutting down"
-      exit 0
-    fi
-    # Show countdown every 10 seconds
-    if (( i % 10 == 0 )); then
-      echo "Waiting for MPI tasks... ${TIMEOUT-i}s remaining"
-    fi
-    sleep 1
-    sleep infinity
-  done
-  echo "Timeout reached (${TIMEOUT}s), no MPI tasks detected. Worker shutting down."
-  exit 0
+    echo "Adding to mpi hostfile: $HOSTNAME"
+    echo "$HOSTNAME slots=1" >> "/app/hostfile"
+  fi
+done
+
+# Verify SSH connections from master to all nodes
+if [ "${MPI_RANK}" = "0" ]; then
+    echo "Testing SSH connections to all nodes"
+    while read -r host _; do
+        echo "Testing SSH to $host"
+        ssh -o StrictHostKeyChecking=no "$host" "echo SSH connection to $host successful" || {
+            echo "ERROR: SSH connection to $host failed"
+            exit 1
+        }
+    done < /app/hostfile
 fi
+
+# Run the MPI application if this is the master node
+if [ "${MPI_RANK}" = "0" ]; then
+  echo "Master node starting MPI application"
+  # comms broken
+  mpirun --allow-run-as-root \
+    -mca btl tcp,self \
+    -H 10.224.13.60:1,10.224.51.123:1,10.224.113.249:1 \
+    --map-by node \
+    -mca plm "rsh" \
+    -mca orte_rsh_agent "ssh -o StrictHostKeyChecking=no" \
+    -mca orte_rsh_disable_shell 0 \
+    -np 3 \
+    python /app/mpi_script.py
+  sleep infinity
+else
+  echo "Worker node ready for MPI tasks"
+  sleep infinity
+fi
+
