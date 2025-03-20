@@ -19,6 +19,7 @@ includes heartbeats for monitoring successful job completion and exit
 
 ## quick start
 ```bash
+pip install armada_client
 make publish OS=amazonlinux OS_VERSION=2023 PKG=pingpong PKG_VERSION=0.0.1
 kubectl port-forward -n armada service/armada-lookout 8080:8080
 kubectl port-forward -n armada service/armada-server 50051:50051
