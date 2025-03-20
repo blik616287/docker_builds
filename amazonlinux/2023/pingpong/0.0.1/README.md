@@ -8,6 +8,10 @@ includes heartbeats for monitoring successful job completion and exit
  
 [![ClickMe](https://img.youtube.com/vi/ESQhptIhD8A/maxresdefault.jpg)](https://www.youtube.com/watch?v=ESQhptIhD8A)
 
+<a href="https://www.youtube.com/watch?v=ESQhptIhD8A">
+  <img src="https://img.youtube.com/vi/ESQhptIhD8A/maxresdefault.jpg" alt="Video Title" width="600">
+</a>
+
 ## required plumbing
 - eks
   - coredns
