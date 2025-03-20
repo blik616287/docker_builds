@@ -24,6 +24,7 @@ RUN apk update && \
     hwloc-dev \
     bsd-compat-headers \
     musl-dev \
+    lustre-client \
     && rm -rf /var/cache/apk/*
 
 # Create workspace directory
