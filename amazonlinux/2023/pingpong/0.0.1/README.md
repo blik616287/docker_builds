@@ -4,7 +4,7 @@ launches pingpong mpi test case with armada_client on EKS
 fsx drive for shared storage and job state tracking
 includes heartbeats for monitoring successful job completion and exit
 
-## obligatory - click me
+## obligatory click me
  
 [![thats_how_i_role](https://img.youtube.com/vi/ESQhptIhD8A/maxresdefault.jpg)](https://www.youtube.com/watch?v=ESQhptIhD8A)
 
