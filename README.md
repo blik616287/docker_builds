@@ -27,6 +27,11 @@ This is here just for interative development for the Armada MPI POC
     - pingpong  # apt resolved mpi
       - 0.0.1
         - base:latest
+- amazonlinux
+  - os version: 2023
+    - pingpong 
+      - 0.0.1
+        - base:latest
 
 ## build
 ```bash
@@ -52,10 +57,15 @@ make OS=alpine OS_VERSION=3.21 PKG=openfoam PKG_VERSION=11 MPI_TYPE=mpich MPI_VE
 # REPOSITORY                     TAG       IMAGE ID       CREATED          SIZE
 # alpine3.21_openfoam11_mpich4.3.0_base   latest    84b8bf20eb17   16 seconds ago       903MB
 
-# pingpong mpi test app
+# local k8s pingpong mpi test app
 make OS=debian OS_VERSION=bookworm-slim PKG=pingpong PKG_VERSION=0.0.1
 # REPOSITORY                     TAG       IMAGE ID       CREATED          SIZE
 debianbookworm-slim_pingpong0.0.1_base                latest              c3b6872a7c11   17 seconds ago       533MB
+
+# aws pingpong mpi test app
+make OS=amazonlinux OS_VERSION=2023 PKG=pingpong PKG_VERSION=0.0.1
+# REPOSITORY                     TAG       IMAGE ID       CREATED          SIZE
+amazonlinux2023_pingpong0.0.1_base                    latest              03aa8d1c31cc   About an hour ago   900MB
 ```
 
 ## publish
