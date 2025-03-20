@@ -8,8 +8,10 @@ includes heartbeats for monitoring successful job completion and exit
  
 [![ClickMe](https://img.youtube.com/vi/ESQhptIhD8A/maxresdefault.jpg)](https://www.youtube.com/watch?v=ESQhptIhD8A)
 
-<a href="https://www.youtube.com/watch?v=ESQhptIhD8A">
+<a href="https://www.youtube.com/watch?v=ESQhptIhD8A" target="_blank">
   <img src="https://img.youtube.com/vi/ESQhptIhD8A/maxresdefault.jpg" alt="Video Title" width="600">
+  <br>
+  Click to watch video (opens in new window)
 </a>
 
 ## required plumbing
