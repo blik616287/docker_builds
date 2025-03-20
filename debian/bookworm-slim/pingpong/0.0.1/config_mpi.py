@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 DISABLE_SSL = os.environ.get("DISABLE_SSL", "true").lower() == "true"
 HOST = os.environ.get("ARMADA_SERVER", "192.168.57.13")
 PORT = os.environ.get("ARMADA_PORT", "30002")
-MPI_PROCESSES = int(os.environ.get("MPI_PROCESSES", "3"))
+MPI_PROCESSES = int(os.environ.get("MPI_PROCESSES", "2"))
 QUEUE_NAME = os.environ.get("QUEUE_NAME", "")
 PRIORITY_FACTOR = float(os.environ.get("PRIORITY_FACTOR", "10.0"))
 JOB_SET_PREFIX = "mpi-jobset"
@@ -247,7 +247,7 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id):
     # Create the main container spec with volumeMounts (not volumeDevices as before)
     main_container = core_v1.Container(
         name=container_name,
-        image=os.environ.get("MPI_IMAGE", "blik6126287/python3.9-slim_mpi-sample0.0.1_base:latest"),
+        image=os.environ.get("MPI_IMAGE", "blik6126287/debianbookworm-slim_pingpong0.0.1:latest"),
         env=mpi_env,
         resources=core_v1.ResourceRequirements(
             requests={
@@ -259,6 +259,22 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id):
                 "memory": api_resource.Quantity(string=memory_request),
             },
         ),
+        ports=[
+            # SSH port for MPI communication
+            core_v1.ContainerPort(containerPort=22, protocol="TCP"),
+            # Define main MPI port range for communication
+            core_v1.ContainerPort(containerPort=15000, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=15100, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=15200, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=15300, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=15400, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=15500, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=15600, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=15700, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=15800, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=15900, protocol="TCP"),
+            core_v1.ContainerPort(containerPort=16000, protocol="TCP"),
+        ],
         # Use volumeMounts instead of volumeDevices for CephFS
         volumeMounts=[
             core_v1.VolumeMount(
@@ -426,8 +442,8 @@ def main():
             queue_name = create_mpi_queue(client)
         logger.info(f"Using queue: {queue_name}")
         # Add a delay to ensure queue is ready
-        time.sleep(5)
-        logger.info("Waiting for queue to be fully ready")
+        logger.info("Waiting 10s for queue to be fully ready")
+        time.sleep(10)
         # Try to get the queue again to make sure it's there
         try:
             client.get_queue(queue_name)

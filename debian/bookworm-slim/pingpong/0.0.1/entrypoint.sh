@@ -8,15 +8,6 @@ echo "MPI_WORLD_SIZE: ${MPI_WORLD_SIZE}"
 echo "JOB_SET_ID: ${JOB_SET_ID}"
 echo "POD_NAME: ${POD_NAME}"
 
-# Set environment variables for MPI
-export OMPI_MCA_btl="tcp,self"
-export OMPI_MCA_btl_tcp_if_include="eth0"
-export OMPI_MCA_oob_tcp_if_include="eth0"
-export OMPI_MCA_orte_keepalive_timeout=60
-export OMPI_MCA_btl_tcp_port_min_v4=31000
-export OMPI_MCA_btl_tcp_port_range_v4=1000
-export OMPI_MCA_oob_tcp_static_ports=31000-32000
-
 # Create shared directories
 export MOUNTPOINT="/app/shared"
 mkdir -p "$MOUNTPOINT/hostfiles/$JOB_SET_ID"
@@ -61,7 +52,7 @@ fi
 
 # Create a flag file for MPI hosts
 mkdir -p "$MOUNTPOINT/hostfiles/$JOB_SET_ID"
-echo "$(hostname -i | tr '.' '-').$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).pod.cluster.local" > "$MOUNTPOINT/hostfiles/$JOB_SET_ID/$POD_NAME"
+echo "$(hostname -i | tr '.' '-').$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).pod.cluster.local" > "$MOUNTPOINT/hostfiles/$JOB_SET_ID/$(hostname)"
 
 # Wait until we have the required number of worker hosts
 # We need to count only the host files, not the SSH keys or other files
@@ -82,24 +73,8 @@ touch /app/hostfile  # Create empty hostfile
 
 # First, gather information about all pods and their IPs
 for FILE in "$MOUNTPOINT/hostfiles/$JOB_SET_ID"/*; do
-  HOSTNAME=$(basename "$FILE")
-  IP_ADDRESS=$(cat "$FILE" | tr -d '\n\r')
-  # Extract IP address if the file contains a hostname with IP format
-  if [[ "$IP_ADDRESS" =~ ^[0-9]+-[0-9]+-[0-9]+-[0-9]+\..* ]]; then
-    # Convert from 10-224-13-48 format to 10.224.13.48
-    IP_ADDRESS=$(echo "$IP_ADDRESS" | cut -d'.' -f1 | sed 's/-/./g')
-    # Check if this is one of our MPI hosts
-    echo "Adding to /etc/hosts: $IP_ADDRESS $HOSTNAME"
-    # Check if entry already exists
-    if grep -q "$HOSTNAME" /etc/hosts; then
-      echo "Entry for $HOSTNAME already exists in /etc/hosts, updating..."
-      sed -i "s/.*$HOSTNAME$/$IP_ADDRESS $HOSTNAME/" /etc/hosts
-    else
-      echo "$IP_ADDRESS $HOSTNAME" >> /etc/hosts
-    fi
-    echo "Adding to mpi hostfile: $HOSTNAME"
-    echo "$HOSTNAME slots=1" >> "/app/hostfile"
-  fi
+  ARECORD=$(cat "$FILE")
+  echo "$ARECORD" >> "/app/hostfile"
 done
 
 # Verify SSH connections from master to all nodes
@@ -117,19 +92,9 @@ fi
 # Run the MPI application if this is the master node
 if [ "${MPI_RANK}" = "0" ]; then
   echo "Master node starting MPI application"
-  # comms broken
-  mpirun --allow-run-as-root \
-    -mca btl tcp,self \
-    -hostfile /app/hostfile \ 
-    --map-by node \
-    -mca plm "rsh" \
-    -mca orte_rsh_agent "ssh -o StrictHostKeyChecking=no" \
-    -mca orte_rsh_disable_shell 0 \
-    -np 3 \
-    python /app/mpi_script.py
+  mpirun --allow-run-as-root -hostfile /app/hostfile --map-by node -np 2 /app/pingpong
   sleep infinity
 else
   echo "Worker node ready for MPI tasks"
   sleep infinity
 fi
-

@@ -9,27 +9,32 @@ BUILD_ARGS ?= --no-cache
 MPI_TYPE ?= mpich
 MPI_VERSION ?= 4.3.0
 
+# Docker Hub repository settings
+DOCKER_REPO ?= blik6126287
+DOCKER_TAG ?= latest
+
 # Dynamically set the Dockerfile directory based on OS
-DOCKERFILE_DIR = $(PWD}/$(OS)
+DOCKERFILE_DIR = $(PWD)/$(OS)
 
 # Use consistent directory structure and image naming
 BASE_DIR = $(OS)/$(OS_VERSION)
 BASE_IMAGE = $(OS)$(OS_VERSION)_$(PKG)$(PKG_VERSION)_base
 TEST_IMAGE = $(OS)$(OS_VERSION)_$(PKG)$(PKG_VERSION)_test
+PUBLISH_IMAGE = $(DOCKER_REPO)/$(OS)$(OS_VERSION)_$(PKG)$(PKG_VERSION)
 
 # Special case for OpenFOAM with MPI dependency
 ifeq ($(PKG), openfoam)
-    BASE_IMAGE = $(OS)$(OS_VERSION)_$(PKG)$(PKG_VERSION)_$(MPI_TYPE)$(MPI_VERSION)_base
-    TEST_IMAGE = $(OS)$(OS_VERSION)_$(PKG)$(PKG_VERSION)_$(MPI_TYPE)$(MPI_VERSION)_test
-    MPI_BASE_IMAGE = $(OS)$(OS_VERSION)_$(MPI_TYPE)$(MPI_VERSION)_base
-    
-    # OpenFOAM Dockerfile paths - specify MPI implementation in filename
-    BASE_DOCKERFILE = $(BASE_DIR)/$(PKG)/$(PKG_VERSION)/Dockerfile.$(MPI_TYPE).$(MPI_VERSION).base
-    TEST_DOCKERFILE = $(BASE_DIR)/$(PKG)/$(PKG_VERSION)/Dockerfile.$(MPI_TYPE).$(MPI_VERSION).test
+	BASE_IMAGE = $(OS)$(OS_VERSION)_$(PKG)$(PKG_VERSION)_$(MPI_TYPE)$(MPI_VERSION)_base
+	TEST_IMAGE = $(OS)$(OS_VERSION)_$(PKG)$(PKG_VERSION)_$(MPI_TYPE)$(MPI_VERSION)_test
+	PUBLISH_IMAGE = $(DOCKER_REPO)/$(OS)$(OS_VERSION)_$(PKG)$(PKG_VERSION)_$(MPI_TYPE)$(MPI_VERSION)
+	MPI_BASE_IMAGE = $(OS)$(OS_VERSION)_$(MPI_TYPE)$(MPI_VERSION)_base
+	# OpenFOAM Dockerfile paths - specify MPI implementation in filename
+	BASE_DOCKERFILE = $(BASE_DIR)/$(PKG)/$(PKG_VERSION)/Dockerfile.$(MPI_TYPE).$(MPI_VERSION).base
+	TEST_DOCKERFILE = $(BASE_DIR)/$(PKG)/$(PKG_VERSION)/Dockerfile.$(MPI_TYPE).$(MPI_VERSION).test
 else
-    # Standard Dockerfile paths for other packages
-    BASE_DOCKERFILE = $(BASE_DIR)/$(PKG)/$(PKG_VERSION)/Dockerfile.base
-    TEST_DOCKERFILE = $(BASE_DIR)/$(PKG)/$(PKG_VERSION)/Dockerfile.test
+	# Standard Dockerfile paths for other packages
+	BASE_DOCKERFILE = $(BASE_DIR)/$(PKG)/$(PKG_VERSION)/Dockerfile.base
+	TEST_DOCKERFILE = $(BASE_DIR)/$(PKG)/$(PKG_VERSION)/Dockerfile.test
 endif
 
 # Get the directory containing the Dockerfile
@@ -43,10 +48,10 @@ CUSTOM_DOCKERFILE_EXISTS := $(shell test -f $(DOCKERFILE_DIR)/Dockerfile && echo
 BASE_EXISTS := $(shell test -f $(BASE_DOCKERFILE) && echo 1 || echo 0)
 TEST_EXISTS := $(shell test -f $(TEST_DOCKERFILE) && echo 1 || echo 0)
 
-.PHONY: all build-base build-test run-test clean config build-custom
+.PHONY: all build-base build-test run-test clean config build-custom publish
 
 # Default target
-all: 
+all:
 	@echo "Using dockerfile directory: $(DOCKERFILE_DIR)"
 	@if [ "$(CUSTOM_DOCKERFILE_EXISTS)" = "1" ]; then \
 		$(MAKE) build-custom; \
@@ -129,6 +134,15 @@ run-test: build-test
 		echo "Test Dockerfile not found at $(TEST_DOCKERFILE). Skipping test run."; \
 	fi
 
+# New publish target
+publish: build-base
+	@echo "Publishing image to Docker Hub"
+	@echo "Tagging $(BASE_IMAGE) as $(PUBLISH_IMAGE):$(DOCKER_TAG)"
+	docker tag $(BASE_IMAGE) $(PUBLISH_IMAGE):$(DOCKER_TAG)
+	@echo "Pushing $(PUBLISH_IMAGE):$(DOCKER_TAG) to Docker Hub"
+	docker push $(PUBLISH_IMAGE):$(DOCKER_TAG)
+	@echo "Successfully published image to Docker Hub"
+
 clean:
 	@echo "Removing images"
 	-if [ "$(TEST_EXISTS)" = "1" ]; then docker rmi $(TEST_IMAGE); fi
@@ -150,6 +164,9 @@ config:
 	@echo "BASE_DIR = $(BASE_DIR)"
 	@echo "BASE_IMAGE = $(BASE_IMAGE)"
 	@echo "TEST_IMAGE = $(TEST_IMAGE)"
+	@echo "PUBLISH_IMAGE = $(PUBLISH_IMAGE)"
+	@echo "DOCKER_REPO = $(DOCKER_REPO)"
+	@echo "DOCKER_TAG = $(DOCKER_TAG)"
 	@echo "BASE_DOCKERFILE = $(BASE_DOCKERFILE)"
 	@echo "BASE_DOCKERFILE_DIR = $(BASE_DOCKERFILE_DIR)"
 	@echo "TEST_DOCKERFILE = $(TEST_DOCKERFILE)"
