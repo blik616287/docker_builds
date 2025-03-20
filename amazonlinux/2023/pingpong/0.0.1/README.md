@@ -6,7 +6,7 @@ includes heartbeats for monitoring successful job completion and exit
 
 ## obligatory
  
-[![Video Title](https://img.youtube.com/vi/ESQhptIhD8A/maxresdefault.jpg)](https://www.youtube.com/watch?v=ESQhptIhD8A)
+[![ClickMe](https://img.youtube.com/vi/ESQhptIhD8A/maxresdefault.jpg)](https://www.youtube.com/watch?v=ESQhptIhD8A)
 
 ## required plumbing
 - eks
