@@ -18,11 +18,17 @@ includes heartbeats for monitoring successful job completion and exit
 - compatible container image
 
 ## quick start
+
+### docker build - from root directory
 ```bash
-pip install armada_client
 make publish OS=amazonlinux OS_VERSION=2023 PKG=pingpong PKG_VERSION=0.0.1
+```
+
+### submit job - from working dir
+```bash
 kubectl port-forward -n armada service/armada-lookout 8080:8080
 kubectl port-forward -n armada service/armada-server 50051:50051
+pip install armada_client
 ./config_mpi.py
 ```
 
