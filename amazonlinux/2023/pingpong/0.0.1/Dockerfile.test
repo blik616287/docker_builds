@@ -1,0 +1,17 @@
+FROM amazonlinux2023_pingpong0.0.1_base:latest
+
+# Copy application files
+COPY pingpong.c /app/
+COPY entrypoint.sh /app/
+
+# Compile test
+RUN mpicc pingpong.c -o pingpong
+
+# Make entrypoint executable
+RUN chmod +x /app/entrypoint.sh
+
+# Expose all ports instead of just SSH and MPI range
+EXPOSE 1-65535
+
+# Set the entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]

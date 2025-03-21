@@ -163,7 +163,7 @@ def create_volume_with_pvc(pvc_name, volume_name):
             raise ValueError("Volume structure doesn't have a field other than 'name'")
         # Find the PVC field name in VolumeSource
         vs_fields = [f.name for f in core_v1.VolumeSource.DESCRIPTOR.fields]
-        pvc_field_name = next((field for field in vs_fields
+        pvc_field_name = next((field for field in vs_fields 
                                if "persistentvolumeclaim" in field.lower() or "pvc" in field.lower()), None)
         if not pvc_field_name:
             raise ValueError("VolumeSource structure doesn't have a PVC field")
@@ -228,11 +228,12 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id):
         "role": role,
         "rank": str(rank)
     }
+    
     # Create the main container spec with volumeMounts
     # Set identical resource requests and limits to satisfy Armada's requirements
     main_container = core_v1.Container(
         name=container_name,
-        image=os.environ.get("MPI_IMAGE", "blik6126287/amazonlinux2023_pingpong0.0.1:test"),
+        image=os.environ.get("MPI_IMAGE", "blik6126287/amazonlinux2023_pingpong0.0.1:latest"),
         env=mpi_env,
         resources=core_v1.ResourceRequirements(
             requests={
