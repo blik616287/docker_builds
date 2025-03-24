@@ -1,0 +1,10 @@
+FROM amazonlinux2023_openfoam12:base
+
+# Copy the validation script
+COPY validate_openfoam.sh /app/validate_openfoam.sh
+
+# Make the script executable
+RUN chmod +x /app/validate_openfoam.sh
+
+# Set the entrypoint to our validation script
+ENTRYPOINT ["/app/validate_openfoam.sh"]

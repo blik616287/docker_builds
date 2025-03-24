@@ -1,4 +1,4 @@
-FROM amazonlinux2023_pingpong0.0.1_base:latest
+FROM amazonlinux2023_pingpong0.0.1:base
 
 # Copy application files
 COPY pingpong.c /app/

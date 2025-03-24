@@ -1,0 +1,79 @@
+FROM amazonlinux:2023
+
+# Install dependencies
+RUN dnf update -y && \
+    dnf install -y \
+    gcc \
+    gcc-c++ \
+    gcc-gfortran \
+    cmake \
+    make \
+    flex \
+    bison \
+    git \
+    wget \
+    curl-minimal \
+    tar \
+    gzip \
+    python3 \
+    findutils \
+    file \
+    zlib-devel \
+    boost-devel \
+    readline-devel \
+    ncurses-devel \
+    libXt-devel \
+    libXrender-devel \
+    libXext-devel \
+    libX11-devel \
+    libXrandr-devel \
+    libSM-devel \
+    libICE-devel \
+    which \
+    hostname \
+    kmod && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Install Lustre client
+RUN dnf install -y kmod-lustre-client lustre-client || echo "Lustre client package not found - will rely on host modules"
+
+# Setup OpenFOAM preferences
+RUN mkdir -p $HOME/.OpenFOAM && \
+    echo "export WM_MPLIB=OPENMPI" > $HOME/.OpenFOAM/prefs.sh && \
+    echo "export SCOTCH_VERSION=6.0.9" >> $HOME/.OpenFOAM/prefs.sh && \
+    echo "export ZOLTAN_VERSION=3.90" >> $HOME/.OpenFOAM/prefs.sh
+
+# Clone OpenFOAM and ThirdParty repositories
+RUN mkdir /opt/openfoam && \
+    cd /opt/openfoam && \
+    git clone https://github.com/OpenFOAM/OpenFOAM-12 && \
+    git clone https://github.com/OpenFOAM/ThirdParty-12
+
+# Download and extract OpenMPI
+RUN cd /opt/openfoam/ThirdParty-12 && \
+    wget https://download.open-mpi.org/release/open-mpi/v2.1/openmpi-2.1.1.tar.gz && \
+    tar zxvf openmpi-2.1.1.tar.gz && \
+    rm openmpi-2.1.1.tar.gz
+
+# Set environment variables and build OpenFOAM
+RUN cd /opt/openfoam/OpenFOAM-12 && \
+    export MPI_ARCH_PATH=/opt/openfoam/ThirdParty-12/platforms/linux64Gcc/openmpi-2.1.1 && \
+    export SCOTCH_ARCH_PATH=$FOAM_INST_DIR/ThirdParty-12/platforms/linux64Gcc/scotch-6.0.9 && \
+    export ZOLTAN_ARCH_PATH=$FOAM_INST_DIR/ThirdParty-12/platforms/linux64Gcc/zoltan-3.90 && \
+    sed -i 's/export ParaView_TYPE=system/export ParaView_TYPE=none/g' etc/bashrc && \
+    sed -i 's/export WM_MPLIB=SYSTEMOPENMPI/export WM_MPLIB=OPENMPI/g' etc/bashrc && \
+    source /opt/openfoam/OpenFOAM-12/etc/bashrc && \
+    ./Allwmake -q -j 10
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\nsource /opt/openfoam/OpenFOAM-12/etc/bashrc\nexec "$@"' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+# Set the entrypoint
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]
+
+# Create app directory
+RUN mkdir -p /app
+WORKDIR /app
