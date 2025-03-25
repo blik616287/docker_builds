@@ -1,5 +1,9 @@
 FROM amazonlinux2023_openfoam12:base
 
+# Set shell environment
+ENV PATH=/opt/openfoam/OpenFOAM-12/platforms/linux64GccDPInt32Opt/bin:/opt/openfoam/OpenFOAM-12/bin:${PATH}
+RUN echo "source /opt/openfoam/OpenFOAM-12/etc/bashrc" >> /root/.bashrc
+
 # Copy the validation script
 COPY validate_openfoam.sh /app/validate_openfoam.sh
 
