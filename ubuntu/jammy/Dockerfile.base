@@ -1,0 +1,39 @@
+FROM ubuntu:jammy
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+RUN apt-get update
+
+# Preselect timezone
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Add the repository
+RUN apt-get install -y curl gpg wget -y
+
+RUN wget -O - https://fsx-lustre-client-repo-public-keys.s3.amazonaws.com/fsx-ubuntu-public-key.asc | gpg --dearmor -o /usr/share/keyrings/fsx-ubuntu-public-key.gpg
+RUN chmod 644 /usr/share/keyrings/fsx-ubuntu-public-key.gpg
+RUN bash -c 'echo "deb [signed-by=/usr/share/keyrings/fsx-ubuntu-public-key.gpg] https://fsx-lustre-client-repo.s3.amazonaws.com/ubuntu jammy main" > /etc/apt/sources.list.d/fsxlustreclientrepo.list && apt-get update'
+RUN apt install -y linux-aws lustre-client-modules-aws
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    openssh-client \
+    openmpi-bin \
+    libopenmpi-dev \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -s https://dl.openfoam.com/add-debian-repo.sh | bash
+
+# Update the repository information
+RUN apt-get update
+
+# Install preferred package. Eg,
+WORKDIR /home
+RUN apt-get install openfoam2412-default -y
+COPY openfoam-master.tar.gz /home/openfoam-master.tar.gz
+RUN tar -xvzf openfoam-master.tar.gz
+
+# # Use the openfoam shell session. Eg,
+# openfoam2412
