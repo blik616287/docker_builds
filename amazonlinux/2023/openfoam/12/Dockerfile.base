@@ -31,7 +31,9 @@ RUN dnf update -y && \
     libICE-devel \
     which \
     hostname \
-    kmod
+    kmod && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
 
 # Setup OpenFOAM preferences
 RUN mkdir -p /root/.OpenFOAM && \
@@ -61,8 +63,10 @@ RUN cd /opt/openfoam/OpenFOAM-12 && \
     export ZOLTAN_ARCH_PATH=$FOAM_INST_DIR/ThirdParty-12/platforms/linux64Gcc/zoltan-3.90 && \
     ./Allwmake -q -j $(expr $(nproc) - 1)
 
-# Install lustre client
-RUN dnf install -y \
+# Install lustre client after OpenFOAM compilation
+# AWS lustre client headers break compilation of openmpi 2.1.1
+RUN dnf update -y && \
+    dnf install -y \
     kmod-lustre-client \
     lustre-client && \
     dnf clean all && \
