@@ -64,7 +64,7 @@ RUN cd /opt/openfoam/OpenFOAM-12 && \
 # Install lustre client
 RUN dnf install -y \
     kmod-lustre-client \
-    lustre-client &&
+    lustre-client && \
     dnf clean all && \
     rm -rf /var/cache/dnf
 
