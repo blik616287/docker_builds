@@ -31,18 +31,13 @@ RUN dnf update -y && \
     libICE-devel \
     which \
     hostname \
-    kmod && \
-    dnf clean all && \
-    rm -rf /var/cache/dnf
-
-# Install Lustre client
-RUN dnf install -y kmod-lustre-client lustre-client || echo "Lustre client package not found - will rely on host modules"
+    kmod
 
 # Setup OpenFOAM preferences
-RUN mkdir -p $HOME/.OpenFOAM && \
-    echo "export WM_MPLIB=OPENMPI" > $HOME/.OpenFOAM/prefs.sh && \
-    echo "export SCOTCH_VERSION=6.0.9" >> $HOME/.OpenFOAM/prefs.sh && \
-    echo "export ZOLTAN_VERSION=3.90" >> $HOME/.OpenFOAM/prefs.sh
+RUN mkdir -p /root/.OpenFOAM && \
+    echo "export WM_MPLIB=OPENMPI" > /root/.OpenFOAM/prefs.sh && \
+    echo "export SCOTCH_VERSION=6.0.9" >> /root/.OpenFOAM/prefs.sh && \
+    echo "export ZOLTAN_VERSION=3.90" >> /root/.OpenFOAM/prefs.sh
 
 # Clone OpenFOAM and ThirdParty repositories
 RUN mkdir /opt/openfoam && \
@@ -58,13 +53,20 @@ RUN cd /opt/openfoam/ThirdParty-12 && \
 
 # Set environment variables and build OpenFOAM
 RUN cd /opt/openfoam/OpenFOAM-12 && \
-    export MPI_ARCH_PATH=/opt/openfoam/ThirdParty-12/platforms/linux64Gcc/openmpi-2.1.1 && \
-    export SCOTCH_ARCH_PATH=$FOAM_INST_DIR/ThirdParty-12/platforms/linux64Gcc/scotch-6.0.9 && \
-    export ZOLTAN_ARCH_PATH=$FOAM_INST_DIR/ThirdParty-12/platforms/linux64Gcc/zoltan-3.90 && \
     sed -i 's/export ParaView_TYPE=system/export ParaView_TYPE=none/g' etc/bashrc && \
     sed -i 's/export WM_MPLIB=SYSTEMOPENMPI/export WM_MPLIB=OPENMPI/g' etc/bashrc && \
     source /opt/openfoam/OpenFOAM-12/etc/bashrc && \
-    ./Allwmake -q -j 10
+    export MPI_ARCH_PATH=/opt/openfoam/ThirdParty-12/platforms/linux64Gcc/openmpi-2.1.1 && \
+    export SCOTCH_ARCH_PATH=$FOAM_INST_DIR/ThirdParty-12/platforms/linux64Gcc/scotch-6.0.9 && \
+    export ZOLTAN_ARCH_PATH=$FOAM_INST_DIR/ThirdParty-12/platforms/linux64Gcc/zoltan-3.90 && \
+    ./Allwmake -q -j $(expr $(nproc) - 1)
+
+# Install lustre client
+RUN dnf install -y \
+    kmod-lustre-client \
+    lustre-client &&
+    dnf clean all && \
+    rm -rf /var/cache/dnf
 
 # Create entrypoint script
 RUN echo '#!/bin/bash\nsource /opt/openfoam/OpenFOAM-12/etc/bashrc\nexec "$@"' > /entrypoint.sh && \
