@@ -8,4 +8,4 @@ ENV TUTORIAL=motorBike
 
 # Set the entrypoint
 WORKDIR /app
-ENTRYPOINT ["bash", "-c", "source ${WM_PROJECT_DIR}/etc/bashrc && source ${WM_PROJECT_DIR}/bin/tools/RunFunctions && cd ${WORK_DIR}/${TUTORIAL} && runApplication blockMesh"]
+ENTRYPOINT ["/bin/bash", "-c", "source ${WM_PROJECT_DIR}/etc/bashrc && source ${WM_PROJECT_DIR}/bin/tools/RunFunctions && cd ${WORK_DIR}/${TUTORIAL} && runApplication blockMesh"]

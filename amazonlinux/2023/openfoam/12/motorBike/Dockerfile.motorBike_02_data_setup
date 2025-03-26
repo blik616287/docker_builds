@@ -8,5 +8,4 @@ ENV TUTORIAL=motorBike
 
 # Set the entrypoint
 WORKDIR /app
-
 ENTRYPOINT ["/bin/bash", "-c", "source ${WM_PROJECT_DIR}/etc/bashrc && cp ${FOAM_TUTORIALS}/resources/geometry/motorBike.obj.gz ${WORK_DIR}/${TUTORIAL}/constant/geometry/"]
