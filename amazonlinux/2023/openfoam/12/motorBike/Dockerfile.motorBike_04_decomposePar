@@ -1,0 +1,11 @@
+FROM amazonlinux2023_openfoam12:base
+
+# Set shell environment
+ENV PATH=/opt/openfoam/OpenFOAM-12/platforms/linux64GccDPInt32Opt/bin:/opt/openfoam/OpenFOAM-12/bin:${PATH}     
+ENV WM_PROJECT_DIR=/opt/openfoam/OpenFOAM-12
+ENV WORK_DIR=/app/shared
+ENV TUTORIAL=motorBike
+
+# Set the entrypoint
+WORKDIR /app
+ENTRYPOINT ["bash", "-c", "source ${WM_PROJECT_DIR}/etc/bashrc && source ${WM_PROJECT_DIR}/bin/tools/RunFunctions && cd ${WORK_DIR}/${TUTORIAL} && runApplication decomposePar -copyZero"]

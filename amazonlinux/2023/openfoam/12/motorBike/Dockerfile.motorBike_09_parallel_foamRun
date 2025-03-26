@@ -33,12 +33,16 @@ RUN echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf && \
 # Set shell environment
 COPY runParallel.sh /app/
 ENV PATH=/opt/openfoam/OpenFOAM-12/platforms/linux64GccDPInt32Opt/bin:/opt/openfoam/OpenFOAM-12/bin:${PATH}
-RUN echo "source /opt/openfoam/OpenFOAM-12/etc/bashrc" >> /root/.bashrc && \
-    echo "source /opt/openfoam/OpenFOAM-12/bin/tools/RunFunctions" >> /root/.bashrc && \
+ENV WM_PROJECT_DIR=/opt/openfoam/OpenFOAM-12
+RUN echo "source ${WM_PROJECT_DIR}/etc/bashrc" >>  /root/.bashrc && \
+    echo "source ${WM_PROJECT_DIR}/bin/tools/RunFunctions" >>  /root/.bashrc && \
     echo "source /app/runParallel.sh" >> /root/.bashrc
+ENV WORK_DIR=/app/shared
+ENV TUTORIAL=motorBike
 
 # Set the entrypoint
 WORKDIR /app
-COPY sleeper.sh /app/
-RUN chmod +x /app/sleeper.sh
-ENTRYPOINT ["/bin/bash", "/app/sleeper.sh"]
+COPY setup_mpi.sh /app/
+COPY runParallel.sh /app/
+RUN chmod +x /app/setup_mpi.sh
+ENTRYPOINT ["/bin/bash", "-c", "source ${WM_PROJECT_DIR}/etc/bashrc && source ${WM_PROJECT_DIR}/bin/tools/RunFunctions && source /app/runParallel.sh && cd ${WORK_DIR}/${TUTORIAL} && /app/setup_mpi.sh \"runParallel -np ${MPI_WORLD_SIZE} $(getApplication)\""]
