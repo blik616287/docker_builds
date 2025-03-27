@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
 
+#### attempted submission
+#./submit2.py \
+#  --disable-ssl --mpi-processes 20 \
+#  --disable-gang-scheduling \
+#  --node-concentration \
+#  --target-node ip-10-0-157-70.us-west-2.compute.internal \
+#  --max-pods-per-node 0 \
+#  --cpu-request 1 \
+#  --memory-request 2Gi
+
 import os
 import uuid
 import grpc
