@@ -68,6 +68,15 @@ def parse_arguments():
                         help='CPU request for containers (default: 1)')
     parser.add_argument('--memory-request', dest='memory_request',
                         help='Memory request for containers (default: 2Gi)')
+    # Node scheduling settings
+    parser.add_argument('--target-node', dest='target_node',
+                        help='Target specific node for all pods (default: none)')
+    parser.add_argument('--max-pods-per-node', dest='max_pods_per_node', type=int,
+                        help='Maximum number of pods to schedule per node (default: 0 - no limit)')
+    parser.add_argument('--disable-gang-scheduling', dest='disable_gang_scheduling', action='store_true',
+                        help='Disable gang scheduling for MPI jobs')
+    parser.add_argument('--node-concentration', dest='node_concentration', action='store_true',
+                        help='Enable node concentration to place pods on same node')
     # Parse the arguments
     args = parser.parse_args()
     # Create a config dictionary by combining environment variables and command-line arguments
@@ -98,6 +107,11 @@ def parse_arguments():
         'MPI_IMAGE': os.environ.get("MPI_IMAGE", "blik6126287/amazonlinux2023_openfoam12:test") if args.mpi_image is None else args.mpi_image,
         'CPU_REQUEST': os.environ.get("CPU_REQUEST", "1") if args.cpu_request is None else args.cpu_request,
         'MEMORY_REQUEST': os.environ.get("MEMORY_REQUEST", "2Gi") if args.memory_request is None else args.memory_request,
+        # Node scheduling settings
+        'TARGET_NODE': os.environ.get("TARGET_NODE", "") if args.target_node is None else args.target_node,
+        'MAX_PODS_PER_NODE': int(os.environ.get("MAX_PODS_PER_NODE", "0")) if args.max_pods_per_node is None else args.max_pods_per_node,
+        'DISABLE_GANG_SCHEDULING': os.environ.get("DISABLE_GANG_SCHEDULING", "false").lower() == "true" if args.disable_gang_scheduling is None else args.disable_gang_scheduling,
+        'NODE_CONCENTRATION': os.environ.get("NODE_CONCENTRATION", "false").lower() == "true" if args.node_concentration is None else args.node_concentration,
     }
     return config
 
@@ -257,7 +271,7 @@ def create_volume_with_pvc(pvc_name, volume_name):
 def create_mpi_pod_spec(client, rank, world_size, job_set_id, config):
     """
     Create a pod spec for an MPI process (master or worker).
-    Updated to use BestEffort QoS (no resource requests/limits specified).
+    Updated to include configuration options for gang scheduling and node placement.
 
     Args:
         client: The Armada client
@@ -274,6 +288,7 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id, config):
     role = "master" if is_master else "worker"
     # Pod naming based on job set ID and rank
     pod_name = f"mpi-{rank}-{job_set_id}"
+    
     # Common environment variables for MPI
     mpi_env = [
         core_v1.EnvVar(name="MPI_WORLD_SIZE", value=str(world_size)),
@@ -292,8 +307,21 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id, config):
         # Shared mount path environment variable
         core_v1.EnvVar(name="MOUNTPOINT", value=config['PVC_MOUNT_PATH']),
     ]
+    
+    # Add an additional environment variable to help with non-gang scheduling if enabled
+    if config['DISABLE_GANG_SCHEDULING']:
+        mpi_env.append(core_v1.EnvVar(name="ARMADA_STANDALONE_JOB", value="true"))
+        mpi_env.append(core_v1.EnvVar(name="ARMADA_DISABLE_GANG_SCHEDULING", value="true"))
+    
+    # Add node concentration environment variable if enabled
+    if config['NODE_CONCENTRATION']:
+        mpi_env.append(core_v1.EnvVar(name="ARMADA_NODE_CONCENTRATION", value="true"))
+        if config['MAX_PODS_PER_NODE'] > 0:
+            mpi_env.append(core_v1.EnvVar(name="ARMADA_MAX_PODS_PER_NODE", value=str(config['MAX_PODS_PER_NODE'])))
+    
     # Container name
     container_name = "mpi-master" if is_master else f"mpi-worker-{rank}"
+    
     # Common pod labels for identification
     pod_labels = {
         "app": "mpi-job",
@@ -301,6 +329,15 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id, config):
         "role": role,
         "rank": str(rank)
     }
+    
+    # Prepare annotations to control scheduling behavior
+    pod_annotations = {}
+    if config['DISABLE_GANG_SCHEDULING']:
+        pod_annotations["armada.io/disable-gang-scheduling"] = "true"
+    if config['NODE_CONCENTRATION']:
+        pod_annotations["armada.io/node-concentration"] = "true"
+        pod_annotations["armada.io/max-pods-per-node"] = str(config['MAX_PODS_PER_NODE']) if config['MAX_PODS_PER_NODE'] > 0 else "unlimited"
+    
     # Create the main container spec with volumeMounts
     # Set identical resource requests and limits to satisfy Armada's requirements
     main_container = core_v1.Container(
@@ -312,10 +349,12 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id, config):
             requests={
                 "cpu": api_resource.Quantity(string=config['CPU_REQUEST']),
                 "memory": api_resource.Quantity(string=config['MEMORY_REQUEST']),
+                "ephemeral-storage": api_resource.Quantity(string="8Gi"),
             },
             limits={
                 "cpu": api_resource.Quantity(string=config['CPU_REQUEST']),
                 "memory": api_resource.Quantity(string=config['MEMORY_REQUEST']),
+                "ephemeral-storage": api_resource.Quantity(string="8Gi"),
             },
         ),
         ports=[
@@ -336,28 +375,51 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id, config):
             seccompProfile=core_v1.SeccompProfile(type="Unconfined")
         )
     )
+    
     try:
         # Create volume with PVC reference using the new volume name
         shared_volume = create_volume_with_pvc(config['PVC_NAME'], config['PVC_VOLUME_NAME'])
         logger.info(f"Created volume '{config['PVC_VOLUME_NAME']}' referencing PVC '{config['PVC_NAME']}'")
+        
+        # Prepare tolerations for pod placement
+        tolerations = []
+        if config['NODE_CONCENTRATION']:
+            # Add toleration to enable node concentration
+            tolerations.append(
+                core_v1.Toleration(
+                    key="armada.io/node-concentration",
+                    operator="Equal",
+                    value="true",
+                    effect="NoSchedule"
+                )
+            )
+        
+        # Handle node selection
+        node_selector = {}
+        if config['TARGET_NODE']:
+            node_selector["kubernetes.io/hostname"] = config['TARGET_NODE']
+        
         # Create pod spec with container and volume
         pod_spec = core_v1.PodSpec(
             containers=[main_container],
             volumes=[shared_volume],
-            nodeSelector={"kubernetes.io/hostname": "ip-10-0-157-70.us-west-2.compute.internal"},
-            #nodeSelector={},
+            nodeSelector=node_selector,
+            tolerations=tolerations,
             # Updated fsGroup for file access
             securityContext=core_v1.PodSecurityContext(
                 fsGroup=1000  # Use a non-root group for file access
             )
         )
-        # Create job request item
+        
+        # Create job request item with annotations
         job_item = client.create_job_request_item(
             priority=config['JOB_PRIORITY'],
             pod_spec=pod_spec,
             labels=pod_labels,
+            annotations=pod_annotations,
             namespace=config['NAMESPACE']
         )
+        
         return job_item
     except Exception as e:
         logger.error(f"Failed to create pod spec: {e}")
@@ -367,6 +429,7 @@ def create_mpi_pod_spec(client, rank, world_size, job_set_id, config):
 def submit_mpi_job(client, queue_name, config):
     """
     Create and submit an MPI job set consisting of one master and multiple workers.
+    Updated to include job set annotations in the job specifications instead of a separate parameter.
 
     Args:
         client: The Armada client
@@ -380,6 +443,7 @@ def submit_mpi_job(client, queue_name, config):
     world_size = config['MPI_PROCESSES']
     job_set_id = f"{config['JOB_SET_PREFIX']}-{uuid.uuid4().hex[:8]}"
     logger.info(f"Creating MPI job set {job_set_id} with {world_size} processes")
+    
     # Create job request items for master and workers
     job_request_items = []
     # Add master pod (rank 0)
@@ -387,23 +451,45 @@ def submit_mpi_job(client, queue_name, config):
     # Add worker pods (ranks 1 to world_size-1)
     for rank in range(1, world_size):
         job_request_items.append(create_mpi_pod_spec(client, rank, world_size, job_set_id, config))
+    
     # Submit the jobs as a job set
     logger.info(f"Submitting job set to queue {queue_name}")
+    
+    # Submit jobs without the annotations parameter (not supported in this version)
     response = client.submit_jobs(
         queue=queue_name,
         job_set_id=job_set_id,
         job_request_items=job_request_items
     )
+    
     # Extract job IDs from response
     job_ids = [item.job_id for item in response.job_response_items]
     logger.info(f"Submitted job set {job_set_id}")
     logger.info(f"Master job ID: {job_ids[0]}")
     logger.info(f"Worker job IDs: {job_ids[1:]}")
-    # Log important information about the PVC
+    
+    # Log important information about the settings
     logger.info(f"Important: All pods use FSX PVC '{config['PVC_NAME']}' mounted at {config['PVC_MOUNT_PATH']}")
     logger.info(f"Make sure PVC '{config['PVC_NAME']}' exists in namespace {config['NAMESPACE']}")
     logger.info(f"The PVC should be used with ReadWriteMany access mode with proper RBAC permissions")
     logger.info(f"All pods will run with resource constraints ({config['CPU_REQUEST']} CPU, {config['MEMORY_REQUEST']} memory)")
+    
+    # Log scheduling configuration
+    if config['DISABLE_GANG_SCHEDULING']:
+        logger.info("Gang scheduling is DISABLED - pods will be scheduled independently")
+    else:
+        logger.info("Gang scheduling is ENABLED - pods will be scheduled as a group")
+    
+    if config['NODE_CONCENTRATION']:
+        logger.info(f"Node concentration is ENABLED - attempting to place more pods on the same node")
+        if config['MAX_PODS_PER_NODE'] > 0:
+            logger.info(f"Maximum pods per node is set to {config['MAX_PODS_PER_NODE']}")
+        else:
+            logger.info("No maximum pods per node limit is set")
+    
+    if config['TARGET_NODE']:
+        logger.info(f"Target node is set to: {config['TARGET_NODE']}")
+    
     return job_set_id, job_ids
 
 
@@ -478,8 +564,18 @@ def main():
     try:
         # Parse arguments and build configuration
         config = parse_arguments()
+        
+        # Print configuration summary
+        logger.info("Starting Armada MPI job submission with the following configuration:")
+        logger.info(f"  MPI Processes: {config['MPI_PROCESSES']}")
+        logger.info(f"  Target Node: {config['TARGET_NODE'] if config['TARGET_NODE'] else 'Not specified'}")
+        logger.info(f"  Disable Gang Scheduling: {config['DISABLE_GANG_SCHEDULING']}")
+        logger.info(f"  Node Concentration: {config['NODE_CONCENTRATION']}")
+        logger.info(f"  Max Pods Per Node: {config['MAX_PODS_PER_NODE'] if config['MAX_PODS_PER_NODE'] > 0 else 'Unlimited'}")
+        
         # Create Armada client
         client = create_armada_client(config)
+        
         # Get queue - either create new one or use existing one
         if config['QUEUE_NAME']:
             # Try to use specified queue name
@@ -487,15 +583,16 @@ def main():
                 queue_name = use_existing_queue(client, config['QUEUE_NAME'])
             except Exception as e:
                 logger.warning(f"Could not use existing queue {config['QUEUE_NAME']}: {e}")
-                logger.info("Falling back to queue creation")
                 queue_name = create_mpi_queue(client, config)
         else:
             # Create a new queue
             queue_name = create_mpi_queue(client, config)
         logger.info(f"Using queue: {queue_name}")
+        
         # Add a delay to ensure queue is ready
         logger.info("Waiting 10s for queue to be fully ready")
         time.sleep(10)
+        
         # Try to get the queue again to make sure it's there
         try:
             client.get_queue(queue_name)
@@ -503,15 +600,18 @@ def main():
         except grpc.RpcError as e:
             logger.error(f"Queue still not accessible after delay: {e}")
             raise e
+        
         # Important: Using FSX PVC with ReadWriteMany capability
         logger.info(f"IMPORTANT: A PVC named {config['PVC_NAME']} must exist in namespace {config['NAMESPACE']}")
         logger.info(f"The PVC should have accessModes: ReadWriteMany")
         logger.info(f"Using FSX for shared filesystem access")
+        
         # Submit MPI job
         job_set_id, job_ids = submit_mpi_job(client, queue_name, config)
         logger.info(f"MPI job set {job_set_id} submitted successfully")
         logger.info(f"Using FSX PVC {config['PVC_NAME']} mounted at {config['PVC_MOUNT_PATH']}")
         logger.info(f"All pods will run with resource constraints ({config['CPU_REQUEST']} CPU, {config['MEMORY_REQUEST']} memory)")
+        
         # Monitor job execution
         success = monitor_job_set(client, queue_name, job_set_id, config)
         if success:
