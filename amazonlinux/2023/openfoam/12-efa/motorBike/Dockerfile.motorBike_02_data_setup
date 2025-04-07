@@ -1,0 +1,11 @@
+FROM amazonlinux2023_openfoam12-efa:base
+
+# Set shell environment
+ENV PATH=/opt/openfoam/OpenFOAM-12/platforms/linux64GccDPInt32Opt/bin:/opt/openfoam/OpenFOAM-12/bin:${PATH}
+ENV WM_PROJECT_DIR=/opt/openfoam/OpenFOAM-12
+ENV WORK_DIR=/app/shared
+ENV TUTORIAL=motorBike
+
+# Set the entrypoint
+WORKDIR /app
+ENTRYPOINT ["/bin/bash", "-c", "source ${WM_PROJECT_DIR}/etc/bashrc && cp ${FOAM_TUTORIALS}/resources/geometry/motorBike.obj.gz ${WORK_DIR}/${TUTORIAL}/constant/geometry/"]

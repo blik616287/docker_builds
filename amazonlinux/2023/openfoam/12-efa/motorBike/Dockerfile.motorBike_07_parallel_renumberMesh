@@ -1,0 +1,48 @@
+FROM amazonlinux2023_openfoam12-efa:base
+
+# Install SSH server
+RUN dnf update && \
+    dnf install -y \
+    iproute \
+    openssh-server \
+    openssh-clients && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Configure SSH
+RUN mkdir -p /var/run/sshd && \
+    mkdir -p /root/.ssh && \
+    chmod 700 /root/.ssh && \
+    echo "Host *" > /root/.ssh/config && \
+    echo "  StrictHostKeyChecking no" >> /root/.ssh/config && \
+    echo "  UserKnownHostsFile /dev/null" >> /root/.ssh/config && \
+    chmod 600 /root/.ssh/config && \
+    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PermitRootLogin yes/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#StrictHostKeyChecking ask/StrictHostKeyChecking no/' /etc/ssh/ssh_config && \
+    echo "UserKnownHostsFile /dev/null" >> /etc/ssh/ssh_config && \
+    echo "LogLevel ERROR" >> /etc/ssh/ssh_config
+
+# Disable IPv6
+RUN echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf && \
+    echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf && \
+    echo "net.ipv6.conf.lo.disable_ipv6 = 1" >> /etc/sysctl.conf && \
+    sed -i 's/#AddressFamily any/AddressFamily inet/' /etc/ssh/sshd_config && \
+    sed -i 's/#ListenAddress 0.0.0.0/ListenAddress 0.0.0.0/' /etc/ssh/sshd_config
+                                                                                   
+# Set shell environment
+COPY runParallel.sh /app/
+ENV PATH=/opt/openfoam/OpenFOAM-12/platforms/linux64GccDPInt32Opt/bin:/opt/openfoam/OpenFOAM-12/bin:${PATH}
+ENV WM_PROJECT_DIR=/opt/openfoam/OpenFOAM-12
+RUN echo "source ${WM_PROJECT_DIR}/etc/bashrc" >>  /root/.bashrc && \
+    echo "source ${WM_PROJECT_DIR}/bin/tools/RunFunctions" >>  /root/.bashrc && \
+    echo "source /app/runParallel.sh" >> /root/.bashrc
+ENV WORK_DIR=/app/shared
+ENV TUTORIAL=motorBike
+
+# Set the entrypoint
+WORKDIR /app
+COPY setup_mpi.sh /app/
+COPY runParallel.sh /app/
+RUN chmod +x /app/setup_mpi.sh
+ENTRYPOINT ["/bin/bash", "-c", "source ${WM_PROJECT_DIR}/etc/bashrc && source ${WM_PROJECT_DIR}/bin/tools/RunFunctions && source /app/runParallel.sh && cd ${WORK_DIR}/${TUTORIAL} && /app/setup_mpi.sh \"runParallel -np ${MPI_WORLD_SIZE} renumberMesh -overwrite\""]

@@ -1,0 +1,5 @@
+FROM amazonlinux2023_openfoam12-efa:base
+
+# Set the entrypoint
+WORKDIR /app
+ENTRYPOINT ["/bin/bash", "-c", "cd /app/shared/motorBike && find . -type f -iname \"*level*\" -delete"]

@@ -1,0 +1,115 @@
+FROM amazonlinux:2023
+
+# Install dependencies
+RUN dnf update -y && \
+    dnf install -y \
+    gcc \
+    gcc-c++ \
+    gcc-gfortran \
+    cmake \
+    make \
+    flex \
+    bison \
+    git \
+    wget \
+    curl-minimal \
+    tar \
+    gzip \
+    python3 \
+    findutils \
+    file \
+    zlib-devel \
+    boost-devel \
+    readline-devel \
+    ncurses-devel \
+    libXt-devel \
+    libXrender-devel \
+    libXext-devel \
+    libX11-devel \
+    libXrandr-devel \
+    libSM-devel \
+    libICE-devel \
+    which \
+    hostname \
+    kmod && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Install EFA and OpenMPI
+RUN mkdir -p /opt/efa && \
+    cd /opt/efa && \
+    curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz && \
+    tar -xf aws-efa-installer-latest.tar.gz && \
+    cd aws-efa-installer && \
+    ./efa_installer.sh -y -d --skip-kmod --skip-limit-conf --no-verify && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Setup environment
+ENV MODULEPATH=/opt/amazon/modules/modulefiles:/usr/share/Modules/modulefiles:/etc/modulefiles \
+    MODULESHOME=/usr/share/Modules \
+    PATH=/opt/amazon/openmpi5/bin:/opt/amazon/openmpi/bin:/opt/amazon/efa/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/home/ec2-user/.local/bin:/home/ec2-user/bin \
+    LD_LIBRARY_PATH=/opt/amazon/openmpi5/lib64:/opt/amazon/openmpi5/lib:/opt/amazon/efa/lib64
+COPY mpi_efa_env.sh /etc/profile.d/mpi_efa_env.sh
+COPY bashrc /root/.bashrc
+COPY environment /etc/environment
+RUN chmod 644 /etc/profile.d/mpi_efa_env.sh /root/.bashrc /etc/environment
+
+# Setup OpenFOAM preferences
+RUN mkdir -p /root/.OpenFOAM && \
+    echo "export WM_MPLIB=SYSTEM" > /root/.OpenFOAM/prefs.sh && \
+    echo "export SCOTCH_VERSION=6.0.9" >> /root/.OpenFOAM/prefs.sh && \
+    echo "export ZOLTAN_VERSION=3.90" >> /root/.OpenFOAM/prefs.sh
+
+# Clone OpenFOAM and ThirdParty repositories
+RUN mkdir /opt/openfoam && \
+    cd /opt/openfoam && \
+    git clone https://github.com/OpenFOAM/OpenFOAM-12 && \
+    git clone https://github.com/OpenFOAM/ThirdParty-12
+
+# Set environment variables and build OpenFOAM
+RUN cd /opt/openfoam/OpenFOAM-12 && \
+    export PATH=$PATH:/opt/amazon/openmpi5/bin:/opt/amazon/efa/bin && \
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/amazon/openmpi5/lib:/opt/amazon/efa/lib64 && \
+    source /usr/share/Modules/init/bash && \
+    export MODULEPATH=/opt/amazon/modules/modulefiles:/usr/share/Modules/modulefiles:/etc/modulefiles && \
+    export MODULESHOME=/usr/share/Modules && \
+    module load openmpi5 && \
+    source /opt/openfoam/OpenFOAM-12/etc/bashrc && \
+    export ParaView_TYPE=none && \
+    export WM_MPLIB=SYSTEMMPI && \
+    export CPATH=/opt/amazon/openmpi5/include:$CPATH && \
+    export CPLUS_INCLUDE_PATH=/opt/amazon/openmpi5/include:$CPLUS_INCLUDE_PATH && \
+    export MPI_ROOT=/opt/amazon/openmpi5 && \
+    export MPI_ARCH_FLAGS="-DOMPI_SKIP_MPICXX" && \
+    export MPI_ARCH_INC="-isystem $MPI_ROOT/include" && \
+    export MPI_ARCH_LIBS="-L$MPI_ROOT/lib64 -lmpi" && \
+    export LD_LIBRARY_PATH=$MPI_ROOT/lib64:$LD_LIBRARY_PATH && \
+    export SCOTCH_ARCH_PATH=$FOAM_INST_DIR/ThirdParty-12/platforms/linux64GccDPInt32/scotch_6.0.9 && \
+    export ZOLTAN_ARCH_PATH=$FOAM_INST_DIR/ThirdParty-12/platforms/linux64GccDPInt32/zoltan-3.90 && \
+    export ZOLTAN_VERSION=3.90 && \
+    export FOAM_EXT_LIBBIN=/opt/openfoam/ThirdParty-12/platforms/linux64GccDPInt32/lib && \
+    export FOAM_MPI=openmpi5 && \
+    export LIBRARY_PATH=$MPI_ROOT/lib64:$LIBRARY_PATH && \
+    ./Allwmake -j $(expr $(nproc) - 1)
+
+# Install lustre client after OpenFOAM compilation
+# AWS lustre client headers break compilation of openmpi 2.1.1
+RUN dnf update -y && \
+    dnf install -y \
+    kmod-lustre-client \
+    lustre-client && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\nsource /opt/openfoam/OpenFOAM-12/etc/bashrc\nexec "$@"' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+# Set the entrypoint
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]
+
+# Create app directory
+RUN mkdir -p /app
+WORKDIR /app

@@ -1,0 +1,14 @@
+# Load MPI module and build PT-Scotch
+#COPY Makefile.inc /opt/openfoam/ThirdParty-12/scotch_6.0.9/src/Makefile.inc
+#RUN source /usr/share/Modules/init/bash && \
+#    export MODULEPATH=/opt/amazon/modules/modulefiles:/usr/share/Modules/modulefiles:/etc/modulefiles && \
+#    export MODULESHOME=/usr/share/Modules && \
+#    module load openmpi5 && \
+#    cd /opt/openfoam/ThirdParty-12/scotch_6.0.9/src && \
+#    make ptscotch
+
+# Set up PT-Scotch for OpenFOAM
+#RUN mkdir -p /opt/openfoam/ThirdParty-12/platforms/linux64GccDPInt32/scotch_6.0.9/include && \
+#    mkdir -p /opt/openfoam/ThirdParty-12/platforms/linux64GccDPInt32/lib && \
+#    cp /opt/openfoam/ThirdParty-12/scotch_6.0.9/include/ptscotch*.h /opt/openfoam/ThirdParty-12/platforms/linux64GccDPInt32/scotch_6.0.9/include/ && \
+#    cp /opt/openfoam/ThirdParty-12/scotch_6.0.9/lib/libptscotch*.so /opt/openfoam/ThirdParty-12/platforms/linux64GccDPInt32/lib/
