@@ -47,3 +47,7 @@ sudo docker login -u blik616287
 # build and deploy
 make publish OS=debian OS_VERSION=bookworm-slim PKG=pingpong PKG_VERSION=0.0.1
 ```
+
+## License
+
+[MIT](LICENSE) © 2025 Martin Forde <mforde84@gmail.com>, [Blik Labs](https://bliklabs.com).
